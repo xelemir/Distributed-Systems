@@ -4,7 +4,8 @@ University of Stuttgart, Distributed Systems (Prof. Marco Aiello).
 
 Course material in this folder:
 - `lectures/01 Introduction.pdf`: project requirements (slides 12–13)
-- `DS_One_Page_Proposal.pdf`, `DS_Project_Report_Form.pdf`: the forms we must fill
+- `DS_Preliminary_Updated_Project_Form.pdf`: the preliminary/updated project form, with one box per requirement (replaces `DS_One_Page_Proposal.pdf`)
+- `DS_Project_Report_Form.pdf`: the final report form
 
 ## Idea
 A CLI group chat with threads, in Python.
