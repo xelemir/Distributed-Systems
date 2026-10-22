@@ -4,7 +4,8 @@ University of Stuttgart, Distributed Systems (Prof. Marco Aiello).
 
 Course material in this folder:
 - `lectures/01 Introduction.pdf`: project requirements (slides 12–13)
-- `DS_One_Page_Proposal.pdf`, `DS_Project_Report_Form.pdf`: the forms we must fill
+- `DS_Preliminary_Updated_Project_Form.pdf`: the preliminary/updated project form, with one box per requirement (replaces `DS_One_Page_Proposal.pdf`)
+- `DS_Project_Report_Form.pdf`: the final report form
 
 ## Idea
 A CLI group chat with threads, in Python.
@@ -33,16 +34,72 @@ A CLI group chat with threads, in Python.
 - **Display:** threads indented; short message IDs; wall-clock time is shown but never used for ordering.
 - **Consistency model:** causal consistency. Concurrent messages may be ordered differently on different replicas; that is by design.
 
-## Lecture requirements (UniStu, slide 12) and how we meet them
-| Requirement | Grading | Our solution |
-|---|---|---|
-| Architectural description | binary | Hybrid: peer group of servers + client-server for clients; diagram in proposal and report |
-| Dynamic discovery of hosts | binary | UDP broadcast; servers find servers, clients find servers, at startup and on every join |
-| Fault tolerance | fail-stop → crash → byzantine | Crash faults of leader, regular server and client; plus message omission via NACK |
-| Election | correctness/robustness | LeLann-Chang-Roberts on a ring ordered by UUID; runs at startup, on server join, on leader failure |
-| Ordered reliable multicast | FIFO → causal → total | Causal (vector clocks + hold-back queue), reliable via sequence numbers + NACK retransmission |
+## Project requirements: why each one matters and how we meet it
+`01 Overview and logistics`: every requirement must have a purpose in the application; if one has none, the application is the wrong choice. So each requirement below needs two answers:
+- **Why it's relevant:** asked by the preliminary and updated project forms.
+- **How:** "how we plan to meet it" in the project forms, "how we met it" (what we implemented) in the report form.
 
-The final report form asks about all of these (TCP/UDP use, threading, discovery, voting, group view, node IDs, heartbeats, recovery, ordering, reliability), so every design choice needs a one-line justification.
+Grading tiers are from `01 Introduction` slide 12. The report form also asks detail questions (TCP/UDP use, threading, discovery, voting, group view, node IDs, heartbeats, recovery, ordering, reliability), so every design choice needs a one-line justification.
+
+### Architectural model (binary)
+Form section: architecture type (client-server / peer-to-peer / hybrid), what TCP, UDP and other protocols are used for, and what multithreading or multiprocessing is used for. This is *not* the diagram; that is the System Architecture Design section.
+- **Why it's relevant:** with a single server, one crash loses the whole chat history and every user. Several servers must hold the same data as equal peers, while clients stay simple and only talk to one server.
+- **How:**
+  - Hybrid. Servers form a peer group, each with the full log and no master for data. Clients use client-server with one server.
+  - TCP/UDP split as in [Architecture](#architecture).
+  - Multithreading: one thread per listener socket and per client, plus a heartbeat timer. No multiprocessing, because the work is I/O-bound.
+
+### System architecture design (separate form section, diagram only)
+Not a requirement of its own, but both forms and the report need it: one clear diagram of the key components and the connections between them.
+- **Components:**
+  - Each server has discovery, group view, election, failure detector, reliable causal multicast, chat log and client handler; mark the leader.
+  - Each client has the CLI and session/failover logic.
+- **Connections, each labelled with its protocol:**
+  - Discovery broadcast (UDP)
+  - Server-to-server multicast, heartbeats and NACKs (UDP)
+  - Election ring (TCP)
+  - State transfer (TCP)
+  - Client↔server (TCP)
+
+### Dynamic discovery of hosts (binary)
+- **Why it's relevant:**
+  - Servers start, crash and rejoin at runtime on different machines with no configured addresses.
+  - A new server must find the group mid-chat to restore the replication level.
+  - A client must find a live server at startup and again after its server crashes.
+- **How:**
+  - UDP broadcast: a server broadcasts `HELLO`, a client broadcasts `DISCOVER`, and the leader answers.
+  - This covers both "client discovers server" and "server discovers servers".
+  - Runs when the system starts and whenever a new component comes in.
+
+### Leader election (correctness/robustness)
+- **Why it's relevant:**
+  - Group-view changes must be decided by one node. If every server changed the view itself, simultaneous joins or crashes could give replicas different views: they would multicast to different sets of servers and the ring would break.
+  - The leader serializes view changes (admit, remove) and does the state transfer to new servers, so one server sends the log instead of all of them.
+  - The leader assigns clients to servers.
+  - When the leader crashes, these jobs must move to another server automatically.
+  - State in the forms that the leader is deliberately *not* a sequencer for chat messages, so chat keeps working during an election. This explains why the leader holds no unique data without it looking purposeless.
+- **How:**
+  - LeLann-Chang-Roberts on a ring ordered by UUID.
+  - Runs at startup, on server join and on leader failure.
+  - The group view is used for the ring, multicast destinations, heartbeat targets and client assignment.
+  - Nodes are identified by UUIDs.
+
+### Fault tolerance (fail-stop → crash → byzantine)
+- **Why it's relevant:**
+  - Fault tolerance is the reason the servers are replicated: users must keep chatting without losing a message when a server, the leader or a laptop crashes.
+  - UDP datagrams get lost on Wi-Fi (omission).
+  - A crashed client must not stay in `/who` forever.
+- **How:**
+  - Tolerates crash faults of the leader, a regular server and a client, plus omission faults.
+  - Heartbeats as in Failure detection; recovery as in the Recovery table below.
+
+### Reliable ordered multicast (FIFO → causal → total)
+- **Why it's relevant:**
+  - Each server accepts posts from its own clients and must get them to every replica, so every user sees every message: that needs reliability.
+  - Bob's reply (via server B) must never appear before Alice's question (via server A) on any replica. These are different senders, so FIFO is not enough; total order is not needed (see Decisions).
+- **How:**
+  - Causal ordering with vector clocks and a hold-back queue.
+  - Reliability with per-sender sequence numbers, NACK retransmission, and acks piggybacked on heartbeats.
 
 ## What needs to be built
 **Discovery**
@@ -101,7 +158,8 @@ The demo must show each slide-12 requirement working live. Layout: one terminal 
 
 | Requirement | What the demo shows |
 |---|---|
-| Architectural description | Walk through the architecture diagram: servers, clients, which links use TCP and which UDP |
+| Architectural model | Explain the hybrid model: peer group of servers + clients on one server each; what TCP, UDP and threads are used for |
+| System architecture design | Walk through the diagram: components and their connections, each labelled TCP or UDP |
 | Dynamic discovery | Start servers one by one with no addresses configured; logs show them finding each other and the view growing. Clients start without addresses and get assigned to a server |
 | Election | LCR messages travel around the ring; the highest UUID wins and all servers agree. Repeat when the leader is killed and when a new server joins |
 | Causal multicast | Delay one server's link on purpose; Alice posts, Bob replies; the delayed server holds the reply back and shows question → reply in order |
